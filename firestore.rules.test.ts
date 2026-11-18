@@ -1,0 +1,103 @@
+/**
+ * Firestore Security Rules Test Specification (Dirty Dozen Verification Matrix)
+ * Run against Firebase Emulator Suite when @firebase/rules-unit-testing is active.
+ */
+
+export const DIRTY_DOZEN_CASES = [
+  {
+    id: 1,
+    name: 'Cross-Patient Read Denied',
+    collection: 'medicines',
+    operation: 'get',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'resource.data.patientId != auth.uid && !(auth.uid in resource.data.authorizedCaregiverIds)',
+  },
+  {
+    id: 2,
+    name: 'Unverified Email Invite Hijack Denied',
+    collection: 'caregiverConnections',
+    operation: 'update',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'request.auth.token.email_verified == true required for email-based invite acceptance',
+  },
+  {
+    id: 3,
+    name: 'Shadow Field Injection & Role Mutation Denied',
+    collection: 'users',
+    operation: 'create/update',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'hasOnly() rejects ghost fields and role is immutable after creation',
+  },
+  {
+    id: 4,
+    name: 'Read-Only Caregiver Medicine Write Denied',
+    collection: 'medicines',
+    operation: 'create',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'Master Gate checks uid in patientProfiles/{patientId}.caregiverCanEditIds',
+  },
+  {
+    id: 5,
+    name: 'Orphaned Medicine Write Denied',
+    collection: 'medicines',
+    operation: 'create',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'exists(/databases/$(database)/documents/patientProfiles/$(patientId)) required',
+  },
+  {
+    id: 6,
+    name: 'Path Variable ID Poisoning Denied',
+    collection: 'medicines',
+    operation: 'create',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'isValidId() restricts IDs to <= 128 chars matching ^[a-zA-Z0-9_\\-]+$',
+  },
+  {
+    id: 7,
+    name: 'Client Timestamp Forgery Denied',
+    collection: 'healthReadings',
+    operation: 'create',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'incoming().createdAt == request.time enforced',
+  },
+  {
+    id: 8,
+    name: 'PatientId Ownership Reassignment Denied',
+    collection: 'medicines',
+    operation: 'update',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'incoming().patientId == existing().patientId enforced',
+  },
+  {
+    id: 9,
+    name: 'Audit Log Update or Delete Denied',
+    collection: 'auditLogs',
+    operation: 'update/delete',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'auditLogs are strictly append-only (allow update, delete: if false)',
+  },
+  {
+    id: 10,
+    name: 'Revoked Connection Resurrection Denied',
+    collection: 'caregiverConnections',
+    operation: 'update',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'Terminal state lock: existing().status != "revoked"',
+  },
+  {
+    id: 11,
+    name: 'Unbounded Array Exhaustion Denied',
+    collection: 'patientProfiles',
+    operation: 'create',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'conditions.size() <= 10 and authorizedCaregiverIds.size() <= 10 enforced',
+  },
+  {
+    id: 12,
+    name: 'Unfiltered Collection List Scraping Denied',
+    collection: 'medicines',
+    operation: 'list',
+    expected: 'PERMISSION_DENIED',
+    rationale: 'allow list checks resource.data.patientId == uid || uid in resource.data.authorizedCaregiverIds',
+  },
+];

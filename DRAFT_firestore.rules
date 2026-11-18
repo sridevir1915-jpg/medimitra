@@ -1,0 +1,887 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Pillar 4.1: Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Pillar 3: Global Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isBoundedStringList(arr, maxLen) {
+      return arr is list && arr.size() <= maxLen && (arr.size() == 0 || (arr[0] is string && arr[0].size() <= 128));
+    }
+
+    function hasValidCaregiverArrays(data) {
+      return isBoundedStringList(data.authorizedCaregiverIds, 10)
+        && isBoundedStringList(data.caregiverCanEditIds, 10);
+    }
+
+    // Pillar 1: Master Gate Relational Sync Helpers (Only used in get/create/update/delete, NEVER in list)
+    function patientProfileExists(patientId) {
+      return exists(/databases/$(database)/documents/patientProfiles/$(patientId));
+    }
+
+    function getPatientProfile(patientId) {
+      return get(/databases/$(database)/documents/patientProfiles/$(patientId)).data;
+    }
+
+    function isAuthorizedCaregiverOnProfile(patientId) {
+      return isSignedIn()
+        && patientProfileExists(patientId)
+        && (request.auth.uid in getPatientProfile(patientId).authorizedCaregiverIds);
+    }
+
+    function isCaregiverEditorOnProfile(patientId) {
+      return isSignedIn()
+        && patientProfileExists(patientId)
+        && (request.auth.uid in getPatientProfile(patientId).caregiverCanEditIds);
+    }
+
+    // =========================================================================
+    // 1. users/{userId} — Strict PII Isolation
+    // =========================================================================
+    function isValidUserAccount(data, userId) {
+      return data.keys().hasAll([
+          'uid', 'email', 'displayName', 'role', 'preferredLanguage',
+          'onboardingCompleted', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'role', 'preferredLanguage',
+          'onboardingCompleted', 'phone', 'fcmToken', 'darkMode',
+          'seniorFontMode', 'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == userId && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.role in ['patient', 'caregiver']
+        && data.preferredLanguage in ['en', 'kn', 'hi']
+        && data.onboardingCompleted is bool
+        && (!('phone' in data) || (data.phone is string && data.phone.size() <= 24))
+        && (!('fcmToken' in data) || (data.fcmToken is string && data.fcmToken.size() <= 512))
+        && (!('darkMode' in data) || data.darkMode is bool)
+        && (!('seniorFontMode' in data) || data.seniorFontMode is bool)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isEmailVerified()
+        && isOwner(userId)
+        && isValidUserAccount(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isEmailVerified()
+        && isOwner(userId)
+        && isValidUserAccount(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().role == existing().role
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'preferredLanguage', 'onboardingCompleted',
+          'phone', 'fcmToken', 'darkMode', 'seniorFontMode', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // 2. patientProfiles/{patientId} — Master Gate Source of Truth
+    // =========================================================================
+    function isValidPatientProfile(data, patientId) {
+      return data.keys().hasAll([
+          'patientId', 'fullName', 'age', 'conditions', 'preferredLanguage',
+          'reminderRepeatMinutes', 'escalationDelayMinutes', 'voiceReadAloud',
+          'bpHighThresholdSys', 'bpHighThresholdDia', 'glucoseFastingMax',
+          'glucosePostMealMax', 'authorizedCaregiverIds', 'caregiverCanEditIds',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'patientId', 'fullName', 'age', 'conditions', 'preferredLanguage',
+          'reminderRepeatMinutes', 'escalationDelayMinutes', 'defaultLowStockThreshold',
+          'voiceReadAloud', 'bpHighThresholdSys', 'bpHighThresholdDia', 'glucoseFastingMax',
+          'glucosePostMealMax', 'primaryDoctorName', 'primaryClinic',
+          'bloodGroup', 'allergies', 'authorizedCaregiverIds',
+          'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.patientId is string && data.patientId == patientId && isValidId(data.patientId)
+        && data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 100
+        && data.age is int && data.age >= 1 && data.age <= 125
+        && isBoundedStringList(data.conditions, 10)
+        && data.preferredLanguage in ['en', 'kn', 'hi']
+        && data.reminderRepeatMinutes is int && data.reminderRepeatMinutes >= 1 && data.reminderRepeatMinutes <= 120
+        && data.escalationDelayMinutes is int && data.escalationDelayMinutes >= 5 && data.escalationDelayMinutes <= 240
+        && (!('defaultLowStockThreshold' in data) || (data.defaultLowStockThreshold is int && data.defaultLowStockThreshold >= 0 && data.defaultLowStockThreshold <= 500))
+        && data.voiceReadAloud is bool
+        && data.bpHighThresholdSys is int && data.bpHighThresholdSys >= 100 && data.bpHighThresholdSys <= 220
+        && data.bpHighThresholdDia is int && data.bpHighThresholdDia >= 60 && data.bpHighThresholdDia <= 140
+        && data.glucoseFastingMax is int && data.glucoseFastingMax >= 80 && data.glucoseFastingMax <= 250
+        && data.glucosePostMealMax is int && data.glucosePostMealMax >= 100 && data.glucosePostMealMax <= 350
+        && (!('primaryDoctorName' in data) || (data.primaryDoctorName is string && data.primaryDoctorName.size() <= 100))
+        && (!('primaryClinic' in data) || (data.primaryClinic is string && data.primaryClinic.size() <= 120))
+        && (!('bloodGroup' in data) || (data.bloodGroup is string && data.bloodGroup.size() <= 12))
+        && (!('allergies' in data) || (data.allergies is string && data.allergies.size() <= 300))
+        && hasValidCaregiverArrays(data)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /patientProfiles/{patientId} {
+      allow get: if isValidId(patientId) && isSignedIn() && (
+        isOwner(patientId) ||
+        (resource != null && (
+          existing().patientId == request.auth.uid ||
+          request.auth.uid in existing().authorizedCaregiverIds
+        ))
+      );
+      allow list: if isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        request.auth.uid in existing().authorizedCaregiverIds
+      );
+      allow create: if isValidId(patientId)
+        && isEmailVerified()
+        && isOwner(patientId)
+        && isValidPatientProfile(incoming(), patientId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(patientId)
+        && isEmailVerified()
+        && isValidPatientProfile(incoming(), patientId)
+        && incoming().patientId == existing().patientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Tier 1: Patient Owner
+          (isOwner(patientId) && incoming().diff(existing()).affectedKeys().hasOnly([
+            'fullName', 'age', 'conditions', 'preferredLanguage',
+            'reminderRepeatMinutes', 'escalationDelayMinutes', 'defaultLowStockThreshold',
+            'voiceReadAloud', 'bpHighThresholdSys', 'bpHighThresholdDia', 'glucoseFastingMax',
+            'glucosePostMealMax', 'primaryDoctorName', 'primaryClinic',
+            'bloodGroup', 'allergies', 'authorizedCaregiverIds',
+            'caregiverCanEditIds', 'updatedAt'
+          ])) ||
+          // Tier 2: Authorized Caregiver Editor (Clinical reference fields only, never access lists)
+          ((request.auth.uid in existing().caregiverCanEditIds) && incoming().diff(existing()).affectedKeys().hasOnly([
+            'primaryDoctorName', 'primaryClinic', 'allergies', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(patientId) && isEmailVerified() && isOwner(patientId);
+    }
+
+    // =========================================================================
+    // 3. caregiverConnections/{connectionId} — Invitation & RBAC Permissions
+    // =========================================================================
+    function isValidPermissionsMap(perms) {
+      return perms is map
+        && perms.keys().hasAll([
+          'canViewLogs', 'canViewVitals', 'canManageSchedules',
+          'receiveMissedDoseAlerts', 'receiveRefillAlerts'
+        ])
+        && perms.keys().hasOnly([
+          'canViewLogs', 'canViewVitals', 'canManageSchedules',
+          'receiveMissedDoseAlerts', 'receiveRefillAlerts'
+        ])
+        && perms.canViewLogs is bool
+        && perms.canViewVitals is bool
+        && perms.canManageSchedules is bool
+        && perms.receiveMissedDoseAlerts is bool
+        && perms.receiveRefillAlerts is bool;
+    }
+
+    function isValidCaregiverConnection(data, connectionId) {
+      return data.keys().hasAll([
+          'id', 'patientId', 'patientName', 'patientEmail',
+          'caregiverId', 'caregiverEmail', 'caregiverName',
+          'relationship', 'status', 'permissions',
+          'escalationDelayMinutes', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientId', 'patientName', 'patientEmail',
+          'caregiverId', 'caregiverEmail', 'caregiverName',
+          'relationship', 'status', 'permissions',
+          'escalationDelayMinutes', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == connectionId && isValidId(data.id)
+        && data.patientId is string && isValidId(data.patientId)
+        && data.patientName is string && data.patientName.size() >= 1 && data.patientName.size() <= 100
+        && data.patientEmail is string && data.patientEmail.size() >= 3 && data.patientEmail.size() <= 160
+        && data.caregiverId is string && data.caregiverId.size() <= 128
+        && data.caregiverEmail is string && data.caregiverEmail.size() >= 3 && data.caregiverEmail.size() <= 160
+        && data.caregiverName is string && data.caregiverName.size() >= 1 && data.caregiverName.size() <= 100
+        && data.relationship is string && data.relationship.size() >= 1 && data.relationship.size() <= 60
+        && data.status in ['pending', 'active', 'revoked']
+        && isValidPermissionsMap(data.permissions)
+        && data.escalationDelayMinutes is int && data.escalationDelayMinutes >= 5 && data.escalationDelayMinutes <= 240
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /caregiverConnections/{connectionId} {
+      allow get: if isValidId(connectionId) && isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        existing().caregiverId == request.auth.uid ||
+        (isEmailVerified() && request.auth.token.email is string && existing().caregiverEmail == request.auth.token.email.lower())
+      );
+      allow list: if isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        existing().caregiverId == request.auth.uid ||
+        (isEmailVerified() && request.auth.token.email is string && existing().caregiverEmail == request.auth.token.email.lower())
+      );
+      allow create: if isValidId(connectionId)
+        && isEmailVerified()
+        && isValidCaregiverConnection(incoming(), connectionId)
+        && incoming().patientId == request.auth.uid
+        && patientProfileExists(incoming().patientId)
+        && incoming().status == 'pending'
+        && incoming().caregiverId == ''
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(connectionId)
+        && isEmailVerified()
+        && isValidCaregiverConnection(incoming(), connectionId)
+        && existing().status != 'revoked'
+        && incoming().id == existing().id
+        && incoming().patientId == existing().patientId
+        && incoming().caregiverEmail == existing().caregiverEmail
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Tier 1: Patient manages permissions or revokes
+          (existing().patientId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+            'permissions', 'status', 'escalationDelayMinutes', 'relationship', 'updatedAt'
+          ])) ||
+          // Tier 2: Invited Caregiver accepts or declines pending invite
+          (existing().status == 'pending'
+            && request.auth.token.email is string
+            && existing().caregiverEmail == request.auth.token.email.lower()
+            && incoming().caregiverId == request.auth.uid
+            && incoming().status in ['active', 'revoked']
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'caregiverId', 'caregiverName', 'status', 'updatedAt'
+            ]))
+        );
+      allow delete: if isValidId(connectionId) && isEmailVerified() && existing().patientId == request.auth.uid;
+    }
+
+    // =========================================================================
+    // 4. medicines/{medicineId}
+    // =========================================================================
+    function isValidMedicine(data, medicineId) {
+      return data.keys().hasAll([
+          'id', 'patientId', 'name', 'dosage', 'form', 'instructions',
+          'frequency', 'mealTimings', 'customTimes', 'startDate', 'endDate',
+          'stockQuantity', 'refillThreshold', 'doctorRef', 'isActive',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientId', 'name', 'dosage', 'form', 'instructions',
+          'frequency', 'mealTimings', 'customTimes', 'startDate', 'endDate',
+          'stockQuantity', 'refillThreshold', 'doctorRef', 'isActive',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == medicineId && isValidId(data.id)
+        && data.patientId is string && isValidId(data.patientId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.dosage is string && data.dosage.size() >= 1 && data.dosage.size() <= 60
+        && data.form in ['tablet', 'capsule', 'syrup', 'injection', 'drops', 'inhaler']
+        && data.instructions is string && data.instructions.size() <= 300
+        && data.frequency is string && data.frequency.size() >= 1 && data.frequency.size() <= 80
+        && isBoundedStringList(data.mealTimings, 10)
+        && isBoundedStringList(data.customTimes, 10)
+        && data.startDate is string && data.startDate.size() <= 20
+        && data.endDate is string && data.endDate.size() <= 20
+        && data.stockQuantity is int && data.stockQuantity >= 0 && data.stockQuantity <= 5000
+        && data.refillThreshold is int && data.refillThreshold >= 0 && data.refillThreshold <= 500
+        && data.doctorRef is string && data.doctorRef.size() <= 120
+        && data.isActive is bool
+        && hasValidCaregiverArrays(data)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /medicines/{medicineId} {
+      allow get: if isValidId(medicineId) && isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        isAuthorizedCaregiverOnProfile(existing().patientId)
+      );
+      allow list: if isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        request.auth.uid in existing().authorizedCaregiverIds
+      );
+      allow create: if isValidId(medicineId)
+        && isEmailVerified()
+        && isValidMedicine(incoming(), medicineId)
+        && patientProfileExists(incoming().patientId)
+        && (incoming().patientId == request.auth.uid || isCaregiverEditorOnProfile(incoming().patientId))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(medicineId)
+        && isEmailVerified()
+        && isValidMedicine(incoming(), medicineId)
+        && incoming().id == existing().id
+        && incoming().patientId == existing().patientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (existing().patientId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'dosage', 'form', 'instructions', 'frequency', 'mealTimings',
+            'customTimes', 'startDate', 'endDate', 'stockQuantity', 'refillThreshold',
+            'doctorRef', 'isActive', 'authorizedCaregiverIds', 'caregiverCanEditIds', 'updatedAt'
+          ])) ||
+          (isCaregiverEditorOnProfile(existing().patientId) && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'dosage', 'form', 'instructions', 'frequency', 'mealTimings',
+            'customTimes', 'startDate', 'endDate', 'stockQuantity', 'refillThreshold',
+            'doctorRef', 'isActive', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(medicineId) && isEmailVerified() && (
+        existing().patientId == request.auth.uid || isCaregiverEditorOnProfile(existing().patientId)
+      );
+    }
+
+    // =========================================================================
+    // 5. medicationSchedules/{scheduleId}
+    // =========================================================================
+    function isValidMedicationSchedule(data, scheduleId) {
+      return data.keys().hasAll([
+          'id', 'patientId', 'medicineId', 'medicineName', 'dosage',
+          'mealTiming', 'scheduledTime', 'daysOfWeek', 'repeatIntervalMinutes',
+          'escalationDelayMinutes', 'isActive', 'timezone',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientId', 'medicineId', 'medicineName', 'dosage',
+          'mealTiming', 'scheduledTime', 'daysOfWeek', 'repeatIntervalMinutes',
+          'escalationDelayMinutes', 'isActive', 'timezone', 'instructions',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == scheduleId && isValidId(data.id)
+        && data.patientId is string && isValidId(data.patientId)
+        && data.medicineId is string && isValidId(data.medicineId)
+        && data.medicineName is string && data.medicineName.size() >= 1 && data.medicineName.size() <= 120
+        && data.dosage is string && data.dosage.size() >= 1 && data.dosage.size() <= 60
+        && data.mealTiming is string && data.mealTiming.size() >= 1 && data.mealTiming.size() <= 40
+        && data.scheduledTime is string && data.scheduledTime.size() >= 4 && data.scheduledTime.size() <= 10
+        && isBoundedStringList(data.daysOfWeek, 7)
+        && data.repeatIntervalMinutes is int && data.repeatIntervalMinutes >= 1 && data.repeatIntervalMinutes <= 120
+        && data.escalationDelayMinutes is int && data.escalationDelayMinutes >= 5 && data.escalationDelayMinutes <= 240
+        && data.isActive is bool
+        && data.timezone is string && data.timezone.size() >= 1 && data.timezone.size() <= 64
+        && (!('instructions' in data) || (data.instructions is string && data.instructions.size() <= 300))
+        && hasValidCaregiverArrays(data)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /medicationSchedules/{scheduleId} {
+      allow get: if isValidId(scheduleId) && isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        isAuthorizedCaregiverOnProfile(existing().patientId)
+      );
+      allow list: if isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        request.auth.uid in existing().authorizedCaregiverIds
+      );
+      allow create: if isValidId(scheduleId)
+        && isEmailVerified()
+        && isValidMedicationSchedule(incoming(), scheduleId)
+        && patientProfileExists(incoming().patientId)
+        && (incoming().patientId == request.auth.uid || isCaregiverEditorOnProfile(incoming().patientId))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(scheduleId)
+        && isEmailVerified()
+        && isValidMedicationSchedule(incoming(), scheduleId)
+        && incoming().id == existing().id
+        && incoming().patientId == existing().patientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (existing().patientId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+            'medicineName', 'dosage', 'mealTiming', 'scheduledTime', 'daysOfWeek',
+            'repeatIntervalMinutes', 'escalationDelayMinutes', 'isActive',
+            'timezone', 'instructions', 'authorizedCaregiverIds', 'caregiverCanEditIds', 'updatedAt'
+          ])) ||
+          (isCaregiverEditorOnProfile(existing().patientId) && incoming().diff(existing()).affectedKeys().hasOnly([
+            'medicineName', 'dosage', 'mealTiming', 'scheduledTime', 'daysOfWeek',
+            'repeatIntervalMinutes', 'escalationDelayMinutes', 'isActive',
+            'timezone', 'instructions', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(scheduleId) && isEmailVerified() && (
+        existing().patientId == request.auth.uid || isCaregiverEditorOnProfile(existing().patientId)
+      );
+    }
+
+    // =========================================================================
+    // 6. medicationLogs/{logId}
+    // =========================================================================
+    function isValidMedicationLog(data, logId) {
+      return data.keys().hasAll([
+          'id', 'patientId', 'medicineId', 'medicineName', 'dosage',
+          'scheduleId', 'scheduledFor', 'status', 'actionAt',
+          'recordedByUid', 'recordedByRole', 'snoozeCount', 'escalatedToCaregiver',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientId', 'medicineId', 'medicineName', 'dosage',
+          'scheduleId', 'scheduledFor', 'status', 'actionAt',
+          'recordedByUid', 'recordedByRole', 'snoozeCount', 'escalatedToCaregiver',
+          'notes', 'correctionReason', 'authorizedCaregiverIds',
+          'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == logId && isValidId(data.id)
+        && data.patientId is string && isValidId(data.patientId)
+        && data.medicineId is string && isValidId(data.medicineId)
+        && data.medicineName is string && data.medicineName.size() >= 1 && data.medicineName.size() <= 120
+        && data.dosage is string && data.dosage.size() >= 1 && data.dosage.size() <= 60
+        && data.scheduleId is string && isValidId(data.scheduleId)
+        && data.scheduledFor is string && data.scheduledFor.size() >= 1 && data.scheduledFor.size() <= 40
+        && data.status in ['pending', 'taken', 'snoozed', 'missed']
+        && data.actionAt is string && data.actionAt.size() <= 40
+        && data.recordedByUid is string && data.recordedByUid == request.auth.uid && isValidId(data.recordedByUid)
+        && data.recordedByRole in ['patient', 'caregiver', 'system']
+        && data.snoozeCount is int && data.snoozeCount >= 0 && data.snoozeCount <= 50
+        && data.escalatedToCaregiver is bool
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 300))
+        && (!('correctionReason' in data) || (data.correctionReason is string && data.correctionReason.size() <= 300))
+        && hasValidCaregiverArrays(data)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /medicationLogs/{logId} {
+      allow get: if isValidId(logId) && isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        isAuthorizedCaregiverOnProfile(existing().patientId)
+      );
+      allow list: if isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        request.auth.uid in existing().authorizedCaregiverIds
+      );
+      allow create: if isValidId(logId)
+        && isEmailVerified()
+        && isValidMedicationLog(incoming(), logId)
+        && patientProfileExists(incoming().patientId)
+        && (incoming().patientId == request.auth.uid || isCaregiverEditorOnProfile(incoming().patientId))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(logId)
+        && isEmailVerified()
+        && isValidMedicationLog(incoming(), logId)
+        && incoming().id == existing().id
+        && incoming().patientId == existing().patientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (existing().patientId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'actionAt', 'recordedByUid', 'recordedByRole', 'snoozeCount',
+            'escalatedToCaregiver', 'notes', 'correctionReason',
+            'authorizedCaregiverIds', 'caregiverCanEditIds', 'updatedAt'
+          ])) ||
+          (isCaregiverEditorOnProfile(existing().patientId) && incoming().diff(existing()).affectedKeys().hasOnly([
+            'status', 'actionAt', 'recordedByUid', 'recordedByRole', 'snoozeCount',
+            'escalatedToCaregiver', 'notes', 'correctionReason', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(logId) && isEmailVerified() && existing().patientId == request.auth.uid;
+    }
+
+    // =========================================================================
+    // 7. healthReadings/{readingId} — BP & Glucose
+    // =========================================================================
+    function isValidHealthReading(data, readingId) {
+      return data.keys().hasAll([
+          'id', 'patientId', 'type', 'measuredAt', 'flagged', 'flagLevel',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientId', 'type', 'measuredAt', 'systolic', 'diastolic',
+          'pulse', 'glucoseValue', 'glucoseContext', 'flagged', 'flagLevel',
+          'notes', 'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == readingId && isValidId(data.id)
+        && data.patientId is string && isValidId(data.patientId)
+        && data.type in ['bp', 'glucose']
+        && data.measuredAt is string && data.measuredAt.size() >= 4 && data.measuredAt.size() <= 40
+        && (!('systolic' in data) || (data.systolic is int && data.systolic >= 40 && data.systolic <= 300))
+        && (!('diastolic' in data) || (data.diastolic is int && data.diastolic >= 30 && data.diastolic <= 200))
+        && (!('pulse' in data) || (data.pulse is int && data.pulse >= 25 && data.pulse <= 240))
+        && (!('glucoseValue' in data) || (data.glucoseValue is int && data.glucoseValue >= 20 && data.glucoseValue <= 900))
+        && (!('glucoseContext' in data) || data.glucoseContext in ['fasting', 'before_meal', 'after_meal', 'bedtime'])
+        && data.flagged is bool
+        && data.flagLevel in ['normal', 'elevated', 'high', 'urgent', 'low']
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 300))
+        && hasValidCaregiverArrays(data)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /healthReadings/{readingId} {
+      allow get: if isValidId(readingId) && isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        isAuthorizedCaregiverOnProfile(existing().patientId)
+      );
+      allow list: if isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        request.auth.uid in existing().authorizedCaregiverIds
+      );
+      allow create: if isValidId(readingId)
+        && isEmailVerified()
+        && isValidHealthReading(incoming(), readingId)
+        && patientProfileExists(incoming().patientId)
+        && (incoming().patientId == request.auth.uid || isCaregiverEditorOnProfile(incoming().patientId))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(readingId)
+        && isEmailVerified()
+        && isValidHealthReading(incoming(), readingId)
+        && incoming().id == existing().id
+        && incoming().patientId == existing().patientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && existing().patientId == request.auth.uid
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'measuredAt', 'systolic', 'diastolic', 'pulse', 'glucoseValue',
+          'glucoseContext', 'flagged', 'flagLevel', 'notes',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'updatedAt'
+        ]);
+      allow delete: if isValidId(readingId) && isEmailVerified() && existing().patientId == request.auth.uid;
+    }
+
+    // =========================================================================
+    // 8. prescriptions/{prescriptionId}
+    // =========================================================================
+    function isValidPrescription(data, prescriptionId) {
+      return data.keys().hasAll([
+          'id', 'patientId', 'doctorName', 'clinicName', 'prescriptionDate',
+          'ocrRawText', 'extractedMedicines', 'confirmedByUser', 'confirmedAt',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientId', 'doctorName', 'clinicName', 'prescriptionDate',
+          'ocrRawText', 'extractedMedicines', 'confirmedByUser', 'confirmedAt',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == prescriptionId && isValidId(data.id)
+        && data.patientId is string && isValidId(data.patientId)
+        && data.doctorName is string && data.doctorName.size() <= 100
+        && data.clinicName is string && data.clinicName.size() <= 120
+        && data.prescriptionDate is string && data.prescriptionDate.size() <= 20
+        && data.ocrRawText is string && data.ocrRawText.size() <= 5000
+        && data.extractedMedicines is list && data.extractedMedicines.size() <= 15
+        && (data.extractedMedicines.size() == 0 || data.extractedMedicines[0] is map)
+        && data.confirmedByUser is bool
+        && data.confirmedAt is string && data.confirmedAt.size() <= 40
+        && hasValidCaregiverArrays(data)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /prescriptions/{prescriptionId} {
+      allow get: if isValidId(prescriptionId) && isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        isAuthorizedCaregiverOnProfile(existing().patientId)
+      );
+      allow list: if isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        request.auth.uid in existing().authorizedCaregiverIds
+      );
+      allow create: if isValidId(prescriptionId)
+        && isEmailVerified()
+        && isValidPrescription(incoming(), prescriptionId)
+        && patientProfileExists(incoming().patientId)
+        && (incoming().patientId == request.auth.uid || isCaregiverEditorOnProfile(incoming().patientId))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(prescriptionId)
+        && isEmailVerified()
+        && isValidPrescription(incoming(), prescriptionId)
+        && incoming().id == existing().id
+        && incoming().patientId == existing().patientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && existing().patientId == request.auth.uid
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'updatedAt'
+        ]);
+      allow delete: if isValidId(prescriptionId) && isEmailVerified() && existing().patientId == request.auth.uid;
+    }
+
+    // =========================================================================
+    // 9. appointments/{appointmentId}
+    // =========================================================================
+    function isValidAppointment(data, appointmentId) {
+      return data.keys().hasAll([
+          'id', 'patientId', 'doctorName', 'specialty', 'clinicName',
+          'appointmentDate', 'appointmentTime', 'reminderEnabled', 'status',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientId', 'doctorName', 'specialty', 'clinicName',
+          'appointmentDate', 'appointmentTime', 'reminderEnabled', 'status',
+          'notes', 'reportSummary', 'authorizedCaregiverIds',
+          'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == appointmentId && isValidId(data.id)
+        && data.patientId is string && isValidId(data.patientId)
+        && data.doctorName is string && data.doctorName.size() >= 1 && data.doctorName.size() <= 100
+        && data.specialty is string && data.specialty.size() <= 80
+        && data.clinicName is string && data.clinicName.size() >= 1 && data.clinicName.size() <= 120
+        && data.appointmentDate is string && data.appointmentDate.size() >= 4 && data.appointmentDate.size() <= 20
+        && data.appointmentTime is string && data.appointmentTime.size() >= 3 && data.appointmentTime.size() <= 12
+        && data.reminderEnabled is bool
+        && data.status in ['upcoming', 'completed', 'cancelled']
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000))
+        && (!('reportSummary' in data) || (data.reportSummary is string && data.reportSummary.size() <= 1500))
+        && hasValidCaregiverArrays(data)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /appointments/{appointmentId} {
+      allow get: if isValidId(appointmentId) && isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        isAuthorizedCaregiverOnProfile(existing().patientId)
+      );
+      allow list: if isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        request.auth.uid in existing().authorizedCaregiverIds
+      );
+      allow create: if isValidId(appointmentId)
+        && isEmailVerified()
+        && isValidAppointment(incoming(), appointmentId)
+        && patientProfileExists(incoming().patientId)
+        && (incoming().patientId == request.auth.uid || isCaregiverEditorOnProfile(incoming().patientId))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(appointmentId)
+        && isEmailVerified()
+        && isValidAppointment(incoming(), appointmentId)
+        && incoming().id == existing().id
+        && incoming().patientId == existing().patientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (existing().patientId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+            'doctorName', 'specialty', 'clinicName', 'appointmentDate',
+            'appointmentTime', 'reminderEnabled', 'status', 'notes',
+            'reportSummary', 'authorizedCaregiverIds', 'caregiverCanEditIds', 'updatedAt'
+          ])) ||
+          (isCaregiverEditorOnProfile(existing().patientId) && incoming().diff(existing()).affectedKeys().hasOnly([
+            'doctorName', 'specialty', 'clinicName', 'appointmentDate',
+            'appointmentTime', 'reminderEnabled', 'status', 'notes', 'reportSummary', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(appointmentId) && isEmailVerified() && (
+        existing().patientId == request.auth.uid || isCaregiverEditorOnProfile(existing().patientId)
+      );
+    }
+
+    // =========================================================================
+    // 10. emergencyContacts/{contactId}
+    // =========================================================================
+    function isValidEmergencyContact(data, contactId) {
+      return data.keys().hasAll([
+          'id', 'patientId', 'name', 'relationship', 'phone', 'isPrimary',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientId', 'name', 'relationship', 'phone', 'isPrimary',
+          'authorizedCaregiverIds', 'caregiverCanEditIds', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == contactId && isValidId(data.id)
+        && data.patientId is string && isValidId(data.patientId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.relationship is string && data.relationship.size() >= 1 && data.relationship.size() <= 60
+        && data.phone is string && data.phone.size() >= 5 && data.phone.size() <= 24
+        && data.isPrimary is bool
+        && hasValidCaregiverArrays(data)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /emergencyContacts/{contactId} {
+      allow get: if isValidId(contactId) && isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        isAuthorizedCaregiverOnProfile(existing().patientId)
+      );
+      allow list: if isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        request.auth.uid in existing().authorizedCaregiverIds
+      );
+      allow create: if isValidId(contactId)
+        && isEmailVerified()
+        && isValidEmergencyContact(incoming(), contactId)
+        && patientProfileExists(incoming().patientId)
+        && (incoming().patientId == request.auth.uid || isCaregiverEditorOnProfile(incoming().patientId))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(contactId)
+        && isEmailVerified()
+        && isValidEmergencyContact(incoming(), contactId)
+        && incoming().id == existing().id
+        && incoming().patientId == existing().patientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (existing().patientId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'relationship', 'phone', 'isPrimary',
+            'authorizedCaregiverIds', 'caregiverCanEditIds', 'updatedAt'
+          ])) ||
+          (isCaregiverEditorOnProfile(existing().patientId) && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'relationship', 'phone', 'isPrimary', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(contactId) && isEmailVerified() && (
+        existing().patientId == request.auth.uid || isCaregiverEditorOnProfile(existing().patientId)
+      );
+    }
+
+    // =========================================================================
+    // 11. notifications/{notificationId}
+    // =========================================================================
+    function isValidNotification(data, notificationId) {
+      return data.keys().hasAll([
+          'id', 'patientId', 'recipientUid', 'type', 'title', 'message',
+          'severity', 'read', 'authorizedCaregiverIds', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientId', 'recipientUid', 'type', 'title', 'message',
+          'severity', 'read', 'authorizedCaregiverIds', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == notificationId && isValidId(data.id)
+        && data.patientId is string && isValidId(data.patientId)
+        && data.recipientUid is string && data.recipientUid.size() >= 1 && data.recipientUid.size() <= 128
+        && data.type in ['reminder', 'missed_escalation', 'refill_low', 'appointment', 'caregiver_invite', 'system']
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && data.message is string && data.message.size() >= 1 && data.message.size() <= 500
+        && data.severity in ['info', 'warning', 'urgent']
+        && data.read is bool
+        && isBoundedStringList(data.authorizedCaregiverIds, 10)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /notifications/{notificationId} {
+      allow get: if isValidId(notificationId) && isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        existing().recipientUid == request.auth.uid ||
+        isAuthorizedCaregiverOnProfile(existing().patientId)
+      );
+      allow list: if isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        existing().recipientUid == request.auth.uid ||
+        request.auth.uid in existing().authorizedCaregiverIds
+      );
+      allow create: if isValidId(notificationId)
+        && isEmailVerified()
+        && isValidNotification(incoming(), notificationId)
+        && patientProfileExists(incoming().patientId)
+        && (incoming().patientId == request.auth.uid || isAuthorizedCaregiverOnProfile(incoming().patientId))
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(notificationId)
+        && isEmailVerified()
+        && isValidNotification(incoming(), notificationId)
+        && incoming().id == existing().id
+        && incoming().patientId == existing().patientId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          ((existing().recipientUid == request.auth.uid || existing().patientId == request.auth.uid || isAuthorizedCaregiverOnProfile(existing().patientId))
+            && incoming().diff(existing()).affectedKeys().hasOnly(['read', 'updatedAt'])) ||
+          (existing().patientId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['authorizedCaregiverIds', 'updatedAt']))
+        );
+      allow delete: if isValidId(notificationId) && isEmailVerified() && (
+        existing().patientId == request.auth.uid || existing().recipientUid == request.auth.uid
+      );
+    }
+
+    // =========================================================================
+    // 12. auditLogs/{logId} — Immutable Audit History
+    // =========================================================================
+    function isValidAuditLog(data, logId) {
+      return data.keys().hasAll([
+          'id', 'patientId', 'actorUid', 'actorName', 'actorRole',
+          'action', 'targetCollection', 'targetId', 'previousValue',
+          'newValue', 'reason', 'authorizedCaregiverIds', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'patientId', 'actorUid', 'actorName', 'actorRole',
+          'action', 'targetCollection', 'targetId', 'previousValue',
+          'newValue', 'reason', 'authorizedCaregiverIds', 'createdAt'
+        ])
+        && data.id is string && data.id == logId && isValidId(data.id)
+        && data.patientId is string && isValidId(data.patientId)
+        && data.actorUid is string && data.actorUid == request.auth.uid && isValidId(data.actorUid)
+        && data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 100
+        && data.actorRole in ['patient', 'caregiver', 'system']
+        && data.action is string && data.action.size() >= 1 && data.action.size() <= 80
+        && data.targetCollection is string && data.targetCollection.size() >= 1 && data.targetCollection.size() <= 60
+        && data.targetId is string && data.targetId.size() >= 1 && data.targetId.size() <= 128
+        && data.previousValue is string && data.previousValue.size() <= 200
+        && data.newValue is string && data.newValue.size() <= 200
+        && data.reason is string && data.reason.size() >= 1 && data.reason.size() <= 300
+        && isBoundedStringList(data.authorizedCaregiverIds, 10)
+        && data.createdAt is timestamp;
+    }
+
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        isAuthorizedCaregiverOnProfile(existing().patientId)
+      );
+      allow list: if isSignedIn() && (
+        existing().patientId == request.auth.uid ||
+        request.auth.uid in existing().authorizedCaregiverIds
+      );
+      allow create: if isValidId(logId)
+        && isEmailVerified()
+        && isValidAuditLog(incoming(), logId)
+        && patientProfileExists(incoming().patientId)
+        && (incoming().patientId == request.auth.uid || isAuthorizedCaregiverOnProfile(incoming().patientId))
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(logId)
+        && isEmailVerified()
+        && isValidAuditLog(incoming(), logId)
+        && existing().patientId == request.auth.uid
+        && incoming().id == existing().id
+        && incoming().patientId == existing().patientId
+        && incoming().actorUid == existing().actorUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().diff(existing()).affectedKeys().hasOnly(['authorizedCaregiverIds']);
+      allow delete: if false;
+    }
+  }
+}

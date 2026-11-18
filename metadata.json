@@ -1,0 +1,11 @@
+{
+  "name": "MediMitra",
+  "description": "AI-powered medication management and elderly healthcare companion for patients and family caregivers.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

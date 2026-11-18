@@ -1,0 +1,491 @@
+{
+  "entities": {
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Authenticated patient or family caregiver account with PII isolated to owner.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "displayName": { "type": "string", "maxLength": 80 },
+        "role": { "type": "string", "enum": ["patient", "caregiver"] },
+        "preferredLanguage": { "type": "string", "enum": ["en", "kn", "hi"] },
+        "onboardingCompleted": { "type": "boolean" },
+        "phone": { "type": "string", "maxLength": 24 },
+        "fcmToken": { "type": "string", "maxLength": 512 },
+        "darkMode": { "type": "boolean" },
+        "seniorFontMode": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "role", "preferredLanguage", "onboardingCompleted", "createdAt", "updatedAt"]
+    },
+    "PatientProfile": {
+      "title": "PatientProfile",
+      "description": "Master profile for a patient including clinical targets, reminder intervals, and authorized caregiver lists.",
+      "type": "object",
+      "properties": {
+        "patientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fullName": { "type": "string", "maxLength": 100 },
+        "age": { "type": "integer" },
+        "conditions": { "type": "array" },
+        "preferredLanguage": { "type": "string", "enum": ["en", "kn", "hi"] },
+        "reminderRepeatMinutes": { "type": "integer" },
+        "escalationDelayMinutes": { "type": "integer" },
+        "defaultLowStockThreshold": { "type": "integer" },
+        "voiceReadAloud": { "type": "boolean" },
+        "bpHighThresholdSys": { "type": "integer" },
+        "bpHighThresholdDia": { "type": "integer" },
+        "glucoseFastingMax": { "type": "integer" },
+        "glucosePostMealMax": { "type": "integer" },
+        "primaryDoctorName": { "type": "string", "maxLength": 100 },
+        "primaryClinic": { "type": "string", "maxLength": 120 },
+        "bloodGroup": { "type": "string", "maxLength": 12 },
+        "allergies": { "type": "string", "maxLength": 300 },
+        "authorizedCaregiverIds": { "type": "array" },
+        "caregiverCanEditIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "patientId",
+        "fullName",
+        "age",
+        "conditions",
+        "preferredLanguage",
+        "reminderRepeatMinutes",
+        "escalationDelayMinutes",
+        "voiceReadAloud",
+        "bpHighThresholdSys",
+        "bpHighThresholdDia",
+        "glucoseFastingMax",
+        "glucosePostMealMax",
+        "authorizedCaregiverIds",
+        "caregiverCanEditIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CaregiverConnection": {
+      "title": "CaregiverConnection",
+      "description": "Explicit patient-to-caregiver invitation and granular permission grant.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "patientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "patientName": { "type": "string", "maxLength": 100 },
+        "patientEmail": { "type": "string", "maxLength": 160 },
+        "caregiverId": { "type": "string", "maxLength": 128 },
+        "caregiverEmail": { "type": "string", "maxLength": 160 },
+        "caregiverName": { "type": "string", "maxLength": 100 },
+        "relationship": { "type": "string", "maxLength": 60 },
+        "status": { "type": "string", "enum": ["pending", "active", "revoked"] },
+        "permissions": { "type": "object" },
+        "escalationDelayMinutes": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "patientName",
+        "patientEmail",
+        "caregiverId",
+        "caregiverEmail",
+        "caregiverName",
+        "relationship",
+        "status",
+        "permissions",
+        "escalationDelayMinutes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Medicine": {
+      "title": "Medicine",
+      "description": "Prescribed medicine record with dosage, meal timings, stock quantity, and refill threshold.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "patientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 120 },
+        "dosage": { "type": "string", "maxLength": 60 },
+        "form": { "type": "string", "enum": ["tablet", "capsule", "syrup", "injection", "drops", "inhaler"] },
+        "instructions": { "type": "string", "maxLength": 300 },
+        "frequency": { "type": "string", "maxLength": 80 },
+        "mealTimings": { "type": "array" },
+        "customTimes": { "type": "array" },
+        "startDate": { "type": "string", "maxLength": 20 },
+        "endDate": { "type": "string", "maxLength": 20 },
+        "stockQuantity": { "type": "integer" },
+        "refillThreshold": { "type": "integer" },
+        "doctorRef": { "type": "string", "maxLength": 120 },
+        "isActive": { "type": "boolean" },
+        "authorizedCaregiverIds": { "type": "array" },
+        "caregiverCanEditIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "name",
+        "dosage",
+        "form",
+        "instructions",
+        "frequency",
+        "mealTimings",
+        "customTimes",
+        "startDate",
+        "endDate",
+        "stockQuantity",
+        "refillThreshold",
+        "doctorRef",
+        "isActive",
+        "authorizedCaregiverIds",
+        "caregiverCanEditIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MedicationSchedule": {
+      "title": "MedicationSchedule",
+      "description": "Recurring reminder slot for a medicine with timezone and escalation intervals.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "patientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "medicineId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "medicineName": { "type": "string", "maxLength": 120 },
+        "dosage": { "type": "string", "maxLength": 60 },
+        "mealTiming": { "type": "string", "maxLength": 40 },
+        "scheduledTime": { "type": "string", "maxLength": 10 },
+        "daysOfWeek": { "type": "array" },
+        "repeatIntervalMinutes": { "type": "integer" },
+        "escalationDelayMinutes": { "type": "integer" },
+        "isActive": { "type": "boolean" },
+        "timezone": { "type": "string", "maxLength": 64 },
+        "instructions": { "type": "string", "maxLength": 300 },
+        "authorizedCaregiverIds": { "type": "array" },
+        "caregiverCanEditIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "medicineId",
+        "medicineName",
+        "dosage",
+        "mealTiming",
+        "scheduledTime",
+        "daysOfWeek",
+        "repeatIntervalMinutes",
+        "escalationDelayMinutes",
+        "isActive",
+        "timezone",
+        "authorizedCaregiverIds",
+        "caregiverCanEditIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MedicationLog": {
+      "title": "MedicationLog",
+      "description": "Dose adherence event tracking taken, snoozed, missed, and escalated states.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "patientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "medicineId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "medicineName": { "type": "string", "maxLength": 120 },
+        "dosage": { "type": "string", "maxLength": 60 },
+        "scheduleId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "scheduledFor": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["pending", "taken", "snoozed", "missed"] },
+        "actionAt": { "type": "string", "maxLength": 40 },
+        "recordedByUid": { "type": "string", "maxLength": 128 },
+        "recordedByRole": { "type": "string", "enum": ["patient", "caregiver", "system"] },
+        "snoozeCount": { "type": "integer" },
+        "escalatedToCaregiver": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 300 },
+        "correctionReason": { "type": "string", "maxLength": 300 },
+        "authorizedCaregiverIds": { "type": "array" },
+        "caregiverCanEditIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "medicineId",
+        "medicineName",
+        "dosage",
+        "scheduleId",
+        "scheduledFor",
+        "status",
+        "actionAt",
+        "recordedByUid",
+        "recordedByRole",
+        "snoozeCount",
+        "escalatedToCaregiver",
+        "authorizedCaregiverIds",
+        "caregiverCanEditIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "HealthReading": {
+      "title": "HealthReading",
+      "description": "Blood pressure or blood glucose measurement with configurable threshold flags.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "patientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["bp", "glucose"] },
+        "measuredAt": { "type": "string", "maxLength": 40 },
+        "systolic": { "type": "integer" },
+        "diastolic": { "type": "integer" },
+        "pulse": { "type": "integer" },
+        "glucoseValue": { "type": "integer" },
+        "glucoseContext": { "type": "string", "enum": ["fasting", "before_meal", "after_meal", "bedtime"] },
+        "flagged": { "type": "boolean" },
+        "flagLevel": { "type": "string", "enum": ["normal", "elevated", "high", "urgent", "low"] },
+        "notes": { "type": "string", "maxLength": 300 },
+        "authorizedCaregiverIds": { "type": "array" },
+        "caregiverCanEditIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "type",
+        "measuredAt",
+        "flagged",
+        "flagLevel",
+        "authorizedCaregiverIds",
+        "caregiverCanEditIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Prescription": {
+      "title": "Prescription",
+      "description": "Scanned prescription OCR metadata and human-confirmed extracted medicines.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "patientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "doctorName": { "type": "string", "maxLength": 100 },
+        "clinicName": { "type": "string", "maxLength": 120 },
+        "prescriptionDate": { "type": "string", "maxLength": 20 },
+        "ocrRawText": { "type": "string", "maxLength": 5000 },
+        "extractedMedicines": { "type": "array" },
+        "confirmedByUser": { "type": "boolean" },
+        "confirmedAt": { "type": "string", "maxLength": 40 },
+        "authorizedCaregiverIds": { "type": "array" },
+        "caregiverCanEditIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "doctorName",
+        "clinicName",
+        "prescriptionDate",
+        "ocrRawText",
+        "extractedMedicines",
+        "confirmedByUser",
+        "confirmedAt",
+        "authorizedCaregiverIds",
+        "caregiverCanEditIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Doctor appointment record with clinic, reminders, consultation notes, and attached report summaries.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "patientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "doctorName": { "type": "string", "maxLength": 100 },
+        "specialty": { "type": "string", "maxLength": 80 },
+        "clinicName": { "type": "string", "maxLength": 120 },
+        "appointmentDate": { "type": "string", "maxLength": 20 },
+        "appointmentTime": { "type": "string", "maxLength": 12 },
+        "reminderEnabled": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["upcoming", "completed", "cancelled"] },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "reportSummary": { "type": "string", "maxLength": 1500 },
+        "authorizedCaregiverIds": { "type": "array" },
+        "caregiverCanEditIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "doctorName",
+        "specialty",
+        "clinicName",
+        "appointmentDate",
+        "appointmentTime",
+        "reminderEnabled",
+        "status",
+        "authorizedCaregiverIds",
+        "caregiverCanEditIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "EmergencyContact": {
+      "title": "EmergencyContact",
+      "description": "Patient-configured emergency contact for one-tap SOS calling.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "patientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 100 },
+        "relationship": { "type": "string", "maxLength": 60 },
+        "phone": { "type": "string", "maxLength": 24 },
+        "isPrimary": { "type": "boolean" },
+        "authorizedCaregiverIds": { "type": "array" },
+        "caregiverCanEditIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "name",
+        "relationship",
+        "phone",
+        "isPrimary",
+        "authorizedCaregiverIds",
+        "caregiverCanEditIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "In-app and caregiver alert notifications including missed-dose escalations and refill warnings.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "patientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "recipientUid": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["reminder", "missed_escalation", "refill_low", "appointment", "caregiver_invite", "system"] },
+        "title": { "type": "string", "maxLength": 120 },
+        "message": { "type": "string", "maxLength": 500 },
+        "severity": { "type": "string", "enum": ["info", "warning", "urgent"] },
+        "read": { "type": "boolean" },
+        "authorizedCaregiverIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "recipientUid",
+        "type",
+        "title",
+        "message",
+        "severity",
+        "read",
+        "authorizedCaregiverIds",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable audit trail for medication corrections, escalations, and caregiver access changes.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "patientId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorUid": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorName": { "type": "string", "maxLength": 100 },
+        "actorRole": { "type": "string", "enum": ["patient", "caregiver", "system"] },
+        "action": { "type": "string", "maxLength": 80 },
+        "targetCollection": { "type": "string", "maxLength": 60 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "previousValue": { "type": "string", "maxLength": 200 },
+        "newValue": { "type": "string", "maxLength": 200 },
+        "reason": { "type": "string", "maxLength": 300 },
+        "authorizedCaregiverIds": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "id",
+        "patientId",
+        "actorUid",
+        "actorName",
+        "actorRole",
+        "action",
+        "targetCollection",
+        "targetId",
+        "previousValue",
+        "newValue",
+        "reason",
+        "authorizedCaregiverIds",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "User account and PII strictly accessible by the account owner."
+    },
+    "/patientProfiles/{patientId}": {
+      "schema": { "$ref": "#/entities/PatientProfile" },
+      "description": "Patient clinical profile and Master Gate caregiver authorization lists."
+    },
+    "/caregiverConnections/{connectionId}": {
+      "schema": { "$ref": "#/entities/CaregiverConnection" },
+      "description": "Patient-caregiver connection invitations and permission grants."
+    },
+    "/medicines/{medicineId}": {
+      "schema": { "$ref": "#/entities/Medicine" },
+      "description": "Patient prescribed medicines and stock inventory."
+    },
+    "/medicationSchedules/{scheduleId}": {
+      "schema": { "$ref": "#/entities/MedicationSchedule" },
+      "description": "Medication reminder timings and repeat intervals."
+    },
+    "/medicationLogs/{logId}": {
+      "schema": { "$ref": "#/entities/MedicationLog" },
+      "description": "Medication adherence history and correction records."
+    },
+    "/healthReadings/{readingId}": {
+      "schema": { "$ref": "#/entities/HealthReading" },
+      "description": "Blood pressure and blood glucose readings."
+    },
+    "/prescriptions/{prescriptionId}": {
+      "schema": { "$ref": "#/entities/Prescription" },
+      "description": "Scanned prescriptions and confirmed medicine extractions."
+    },
+    "/appointments/{appointmentId}": {
+      "schema": { "$ref": "#/entities/Appointment" },
+      "description": "Doctor appointments, reminders, and consultation notes."
+    },
+    "/emergencyContacts/{contactId}": {
+      "schema": { "$ref": "#/entities/EmergencyContact" },
+      "description": "Emergency SOS contact list for the patient."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/NotificationItem" },
+      "description": "Patient and caregiver alerts and missed-dose escalations."
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable audit history for dose corrections and escalations."
+    }
+  }
+}
